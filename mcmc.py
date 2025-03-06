@@ -1,7 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numba
+import scipy.interpolate
+import scipy.optimize
 import stats
+import scipy
 
 @numba.njit
 def Energy(board):
@@ -14,7 +17,7 @@ def Energy(board):
             E += board[x][y]*board[(x + L)% L][(y + 1 + L)% L]
             E += board[x][y]*board[(x + L)% L][(y - 1 + L)% L]
 
-    return -E
+    return -E/2
 
 @numba.njit
 def Magnetization(board):
@@ -35,7 +38,7 @@ def deltaE(board, pos):
     dE += board[x][y]*board[(x - 1 + L)% L][(y + L)% L]
     dE += board[x][y]*board[(x + L)% L][(y + 1 + L)% L]
     dE += board[x][y]*board[(x + L)% L][(y - 1 + L)% L]
-    return 4*dE
+    return 2*dE
 
 @numba.njit
 def runSweep(board, B, N, randx, randy, randflip, sweep):
@@ -50,8 +53,10 @@ def runSweep(board, B, N, randx, randy, randflip, sweep):
     return bint
 
 def runSimulation(L, B, sweeps, N):
-    #board = np.array([[1 for i in range(L)] for j in range(L)])
-    board = np.random.choice([1,-1], (L,L))
+    if B > 0.4:
+        board = np.array([[1 for i in range(L)] for j in range(L)])
+    else:
+        board = np.random.choice([1,-1], (L,L))
 
     # Generate sweeps*N random numbers (x, y), and whether to flip or not
     randx = np.random.randint(0,L, sweeps*N)
@@ -211,7 +216,7 @@ def coarsenInt(int_board, L, div):
     for i in range(0,L,div):
         for j in range(0,L,div):
             #index = i*L + j
-            index2 = i + j//div
+            index2 = i*L//(div*div) + j//div
             total = 0
             for i2 in range(div):
                 for j2 in range(div):
@@ -221,15 +226,22 @@ def coarsenInt(int_board, L, div):
             new_board += (1 << index2) if total > 4 else 0
     
     return new_board
-    
 
 """ def coarsenInt(int_board, L, div):
     new_board = 0
-    board = intToBoard(int_board, L)
-    new_board = coarsenBoard(board, L, div)
-    new_int_board = boardToInt(new_board, L//3)
+    for i in range(0,L,div):
+        for j in range(0,L,div):
+            #index = i*L + j
+            index2 = i + j//div
+            total = 0
+            for i2 in range(div):
+                for j2 in range(div):
+                    index = (i+i2)*L + j + j2
+                    #print(index, index2, (int_board & (1 << index)) >> index)
+                    total += (int_board & (1 << index)) >> index
+            new_board += (1 << index2) if total > 4 else 0
     
-    return new_int_board """
+    return new_board """
 
 def coarsenInts(int_list, L, div):
     new_int_list = []
@@ -242,28 +254,34 @@ def coarsenInts(int_list, L, div):
 # Testing Int Coarsing
 """ fig_count = 0
 
-L = 9
-int_list = runSimulation(L, 0.1, 1, 100)
+L = 27
+int_list = runSimulation(L, 0.1, 100, 100)
+
+for i in range(100):
+    if int_list[i] != boardToInt(intToBoard(int_list[i],L),L):
+        print("Broke")
+
+for i in range(100):
+    if coarsenInt(int_list[0], L, 3) != boardToInt(coarsenBoard(intToBoard(int_list[0], L), L, 3), L//3):
+        print("Broke")
 
 plt.figure(fig_count)
 fig_count += 1
 plt.matshow(intToBoard(int_list[0], L))
 plt.title("Snapshot for Not Coarsened")
 
-print(coarsenInt(int_list[0], L, 3))
-
 plt.figure(fig_count)
 fig_count += 1
-plt.matshow(intToBoard(coarsenInt(int_list[0], L, 3), L//3))
+plt.matshow(coarsenBoard(intToBoard(int_list[0], L), L, 3), L//3)
 plt.title("Snapshot for Coarsened")
 
 plt.show() """
 
 # Coarse vs Natural
 
-save = True
+save = False
 
-B_list = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 100]
+B_list = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 L = 81
 
@@ -272,19 +290,15 @@ fig_count = 0
 avg_M_list_1 = []
 error_M_list_1 = []
 
-sweeps = 10000
+sweeps = 1000
 N = 2000
 
 for B in B_list:
-    int_list = coarsenInts(runSimulation(L, B, sweeps, N), L, 3)
+    big_int_list = runSimulation(L, B, sweeps, N)
+    int_list = coarsenInts(big_int_list, L, 3)
 
     # Magnetization
-    MC = getMagnetizationSnap(L, int_list)
-    short_MC, short_MPC = getProbabilitiesByData(MC)
-
-    short_MC, short_MPC = zip(*sorted(zip(short_MC, short_MPC)))
-    short_MC = list(short_MC)
-    short_MPC = list(short_MPC)
+    MC = getMagnetizationSnap(L//3, int_list)
 
     # Averages
     (mean_M, variance_M, error_M, autocorrelation_M) = stats.Stats(np.array(MC))
@@ -295,18 +309,15 @@ for B in B_list:
     error_M_list_1.append(error_M)
 
 avg_M_list_2 = []
-error_M_list_2 = []
+error_M_list_2 = [] 
+
+L = L//3
 
 for B in B_list:
-    int_list = runSimulation(L//3, B, sweeps, N)
+    int_list = runSimulation(L, B, sweeps, N)
 
     # Magnetization
     MC = getMagnetizationSnap(L, int_list)
-    short_MC, short_MPC = getProbabilitiesByData(MC)
-
-    short_MC, short_MPC = zip(*sorted(zip(short_MC, short_MPC)))
-    short_MC = list(short_MC)
-    short_MPC = list(short_MPC)
 
     # Averages
     (mean_M, variance_M, error_M, autocorrelation_M) = stats.Stats(np.array(MC))
@@ -327,6 +338,66 @@ plt.title("Comparing Average Magnetization of Coarsed Simulation")
 if save:
     plt.savefig("Images/average_magnetization_coarse.png")
 
+""" avg_M_list_2.insert(0, 0.0)
+avg_M_list_2.append(1.0)
+
+B_list.insert(0,-1.0)
+B_list.append(1.1)
+
+M_func = scipy.interpolate.interp1d(avg_M_list_2, np.array(B_list))
+B_lin = np.linspace(0,1,100)
+
+plt.close()
+
+plt.figure(0)
+plt.plot(np.array(B_list[1:-1]), M_func(avg_M_list_1))
+plt.plot(B_lin, B_lin, c="r")
+plt.xlabel("Beta")
+plt.ylabel("R(Beta)")
+plt.title("Coarsening Effect") """
+
+avg_M_list_2[0] = 0
+avg_M_list_2[-1] = 1
+
+M_func = scipy.interpolate.interp1d(avg_M_list_2, np.array(B_list))
+B_lin = np.linspace(0,1,100)
+
+R = scipy.interpolate.interp1d(np.array(B_list), M_func(avg_M_list_1))
+
+plt.close()
+
+plt.figure(0)
+plt.plot(B_lin, R(B_lin))
+plt.plot(B_lin, B_lin, c="r")
+plt.xlabel("Beta")
+plt.ylabel("R(Beta)")
+plt.title("Coarsening Effect")
+
+# Arrows
+B_iter = 0.5
+for i in range(3):
+    plt.arrow(B_iter, R(B_iter), R(B_iter)-B_iter,0)
+    B_iter = R(B_iter)
+    if B_iter < 0 or B_iter > 1:
+        break
+    plt.arrow(B_iter, B_iter, 0, R(B_iter)-B_iter)
+
+if save:
+    plt.savefig("Images/R_coarsening.png")
+
+fixed_point = scipy.optimize.root(lambda B: R(B) - B, 0.5).x[0]
+
+R_grad = scipy.interpolate.interp1d(B_lin, np.gradient(R(B_lin), B_lin))
+
+slope = R_grad(fixed_point)
+
+v = np.log(3)/np.log(slope)
+
+print(slope)
+print(v)
+
+plt.show()
+
 # Coarse Snapshots
 """ save = True
 
@@ -337,10 +408,10 @@ B_list = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 100]
 fig_count = 0
 
 for B in B_list:
-    N = 2000
-    int_list = runSimulation(L, B, 1, N)
+    N = 1000
+    int_list = runSimulation(L, B, 1000, N)
 
-    bit_int = format(int_list[0], "0" + str(L**2) + 'b')
+    bit_int = format(int_list[-1], "0" + str(L**2) + 'b')
     new_board = np.array([[0 for i in range(L)] for j in range(L)]) # Empty Board
     c = 0
     for bit in bit_int:
@@ -413,6 +484,44 @@ plt.title("Energy Histogram")
 plt.savefig("Images\energy_histogram_0_overlay.png") """
 
 # List of B's
+""" L = 27
+N = 1000
+
+B_list = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 100]
+
+fig_count = 0
+
+for B in B_list:
+    int_list = runSimulation(L, B, 10000, N)
+
+    bit_int = format(int_list[0], "0" + str(L**2) + 'b')
+    new_board = np.array([[0 for i in range(L)] for j in range(L)]) # Empty Board
+    c = 0
+    for bit in bit_int:
+        new_board[c // L][c % L] = 1 if bit == "1" else -1 # Set to either -1 or 1 depending on bit value
+        c += 1
+
+    # Energy
+    EC = getEnergiesSnap(L, int_list)
+    short_EC, short_EPC = getProbabilitiesByData(EC)
+
+    short_EC, short_EPC = zip(*sorted(zip(short_EC, short_EPC)))
+    short_EC = list(short_EC)
+    short_EPC = list(short_EPC)
+
+    #print(short_EC)
+    (mean_E, variance_E, error_E, autocorrelation_E) = stats.Stats(np.array(EC))
+    
+
+    short_EC.append(2*short_EC[-1]-short_EC[-2])
+    plt.figure(fig_count)
+    fig_count += 1
+    plt.hist(short_EC[:-1],short_EC, weights=short_EPC)
+    plt.xlabel("Energy")    
+    plt.ylabel("Probability")
+    plt.title("Energy Histogram (B=" + str(B) + ")")
+
+    plt.show() """
 
 """ save = True
 
@@ -431,7 +540,7 @@ for B in B_list:
     N = 2000
     int_list = runSimulation(L, B, 10000, N)
 
-    bit_int = format(int_list[0], "0" + str(L**2) + 'b')
+    bit_int = format(int_list[-1], "0" + str(L**2) + 'b')
     new_board = np.array([[0 for i in range(L)] for j in range(L)]) # Empty Board
     c = 0
     for bit in bit_int:
@@ -453,6 +562,7 @@ for B in B_list:
     short_EC, short_EPC = zip(*sorted(zip(short_EC, short_EPC)))
     short_EC = list(short_EC)
     short_EPC = list(short_EPC)
+    #print(short_EC)
 
     # Magnetization
     MC = getMagnetizationSnap(L, int_list)
@@ -476,25 +586,31 @@ for B in B_list:
 
     # Histograms
 
-    short_EC.append(2*short_EC[-1]-short_EC[-2])
+    if len(short_EC) == 1:
+        short_EC.append(short_EC[-1]+1)
+    else:
+        short_EC.append(2*short_EC[-1]-short_EC[-2])
     plt.figure(fig_count)
     fig_count += 1
     plt.hist(short_EC[:-1],short_EC, weights=short_EPC)
     plt.xlabel("Energy")    
     plt.ylabel("Probability")
-    plt.title("Energy Histogram")
+    plt.title("Energy Histogram, " + str(B))
     plt.axvline(mean_E, c="r")
     if save:
         plt.savefig("Images/energy_hist-"+str(B)+".png")
     plt.close()
 
-    short_MC.append(2*short_MC[-1]-short_MC[-2])
+    if len(short_MC) == 1:
+        short_MC.append(short_MC[-1]+1)
+    else:
+        short_MC.append(2*short_MC[-1]-short_MC[-2])
     plt.figure(fig_count)
     fig_count += 1
     plt.hist(short_MC[:-1],short_MC, weights=short_MPC)
     plt.xlabel("Magnetization")
     plt.ylabel("Probability")
-    plt.title("Magnetization Histogram")
+    plt.title("Magnetization Histogram, " + str(B))
     plt.axvline(mean_M, c="r")
     if save:
         plt.savefig("Images/magnetization_hist-"+str(B)+".png")
@@ -519,18 +635,18 @@ if save:
     plt.savefig("Images/average_magnetization.png")
 
 d_avg_E_list = np.gradient(avg_E_list, B_list)
-print(d_avg_E_list)
+#print(d_avg_E_list)
 
 plt.figure(fig_count)
 fig_count += 1
-plt.plot(1/np.array(B_list), -(1/np.array(B_list))**2 * d_avg_E_list)
+plt.plot(1/np.array(B_list), -(np.array(B_list))**2 * d_avg_E_list)
 plt.xlabel("Temperature")
 plt.ylabel("Heat Capacity")
 plt.title("Heat Capacity by Temperature")
 if save:
-    plt.savefig("Images/heat_capacity.png")
+    plt.savefig("Images/heat_capacity.png") """
 
-plt.show() """
+#plt.show()
 
 # First Part Histogram
 """ 
